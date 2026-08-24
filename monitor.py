@@ -2,13 +2,17 @@ import os
 import re
 import time
 import subprocess
-from datetime import datetime
 
 import requests
 from bs4 import BeautifulSoup
 
 
+# ============================================================
+# 설정
+# ============================================================
+
 GALLERY_URL = "https://gall.dcinside.com/mgallery/board/lists/?id=minikeyboard"
+
 WEBHOOK_URL = os.environ["DISCORD_WEBHOOK"]
 
 STATE_FILE = "last_post.txt"
@@ -22,12 +26,17 @@ HEADERS = {
 }
 
 
+# ============================================================
+# 디시인사이드 게시글 가져오기
+# ============================================================
+
 def get_latest_posts():
     response = requests.get(
         GALLERY_URL,
         headers=HEADERS,
         timeout=20
     )
+
     response.raise_for_status()
 
     soup = BeautifulSoup(response.text, "html.parser")
@@ -35,6 +44,8 @@ def get_latest_posts():
     posts = []
 
     for row in soup.select("tr.ub-content"):
+
+        # 게시글 번호
         num_element = row.select_one(".gall_num")
 
         if not num_element:
@@ -42,35 +53,38 @@ def get_latest_posts():
 
         num_text = num_element.get_text(strip=True)
 
-        # 공지/광고 등 숫자가 아닌 게시물은 제외
+        # 공지/광고 등 숫자가 아닌 항목 제외
         if not num_text.isdigit():
             continue
 
         post_number = int(num_text)
 
+        # 제목
         title_element = row.select_one(".gall_tit a")
-        author_element = row.select_one(".gall_writer")
-        date_element = row.select_one(".gall_date")
 
         if not title_element:
             continue
 
         title = title_element.get_text(" ", strip=True)
 
-        author = (
-            author_element.get_text(" ", strip=True)
-            if author_element
-            else "알 수 없음"
-        )
+        # 작성자
+        author_element = row.select_one(".gall_writer")
 
-        # 작성자 정보에 불필요한 내용이 붙는 경우 정리
+        if author_element:
+            author = author_element.get_text(" ", strip=True)
+        else:
+            author = "알 수 없음"
+
+        # 공백 정리
         author = re.sub(r"\s+", " ", author).strip()
 
-        post_time = (
-            date_element.get_text(" ", strip=True)
-            if date_element
-            else "알 수 없음"
-        )
+        # 작성 시간
+        date_element = row.select_one(".gall_date")
+
+        if date_element:
+            post_time = date_element.get_text(" ", strip=True)
+        else:
+            post_time = "알 수 없음"
 
         posts.append({
             "number": post_number,
@@ -79,10 +93,15 @@ def get_latest_posts():
             "time": post_time,
         })
 
+    # 게시글 번호 순으로 정렬
     posts.sort(key=lambda x: x["number"])
 
     return posts
 
+
+# ============================================================
+# 마지막으로 확인한 게시글 번호 읽기
+# ============================================================
 
 def load_last_post():
     if not os.path.exists(STATE_FILE):
@@ -91,16 +110,26 @@ def load_last_post():
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             return int(f.read().strip())
+
     except Exception:
         return None
 
+
+# ============================================================
+# 마지막 게시글 번호 저장
+# ============================================================
 
 def save_last_post(post_number):
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         f.write(str(post_number))
 
 
+# ============================================================
+# Discord Webhook 전송
+# ============================================================
+
 def send_discord(post):
+
     content = (
         "🔔 **새 글 등록**\n\n"
         f"**제목:** {post['title']}\n"
@@ -110,51 +139,115 @@ def send_discord(post):
 
     response = requests.post(
         WEBHOOK_URL,
-        json={"content": content},
+        json={
+            "content": content
+        },
         timeout=20
     )
 
     response.raise_for_status()
 
 
+# ============================================================
+# GitHub에 마지막 게시글 번호 저장
+# ============================================================
+
 def git_save_state():
+
     try:
+        # Git 사용자 설정
         subprocess.run(
-            ["git", "config", "user.name", "dcinside-notifier"],
+            [
+                "git",
+                "config",
+                "user.name",
+                "dcinside-notifier"
+            ],
             check=True
         )
 
         subprocess.run(
-            ["git", "config", "user.email", "actions@github.com"],
+            [
+                "git",
+                "config",
+                "user.email",
+                "actions@github.com"
+            ],
             check=True
         )
 
+        # 상태 파일 추가
         subprocess.run(
-            ["git", "add", STATE_FILE],
+            [
+                "git",
+                "add",
+                STATE_FILE
+            ],
             check=True
         )
 
+        # 변경사항이 없는지 확인
         result = subprocess.run(
-            ["git", "diff", "--cached", "--quiet"]
+            [
+                "git",
+                "diff",
+                "--cached",
+                "--quiet"
+            ]
         )
 
-        # 변경사항이 있을 때만 commit
-        if result.returncode != 0:
-            subprocess.run(
-                ["git", "commit", "-m", "Update last post state"],
-                check=True
-            )
+        # 변경사항이 없으면 종료
+        if result.returncode == 0:
+            print("저장할 상태 변경사항이 없습니다.")
+            return
 
-            subprocess.run(
-                ["git", "push"],
-                check=True
-            )
+        # 커밋
+        subprocess.run(
+            [
+                "git",
+                "commit",
+                "-m",
+                "Update last post state"
+            ],
+            check=True
+        )
+
+        # 원격 저장소의 최신 상태 가져오기
+        subprocess.run(
+            [
+                "git",
+                "pull",
+                "--rebase",
+                "origin",
+                "main"
+            ],
+            check=True
+        )
+
+        # GitHub에 push
+        subprocess.run(
+            [
+                "git",
+                "push",
+                "origin",
+                "main"
+            ],
+            check=True
+        )
+
+        print("마지막 게시글 상태 저장 성공")
 
     except Exception as e:
+
         print(f"State save error: {e}")
 
 
+# ============================================================
+# 한 번의 게시글 확인
+# ============================================================
+
 def check_once():
+
     posts = get_latest_posts()
 
     if not posts:
@@ -166,16 +259,28 @@ def check_once():
     print(f"현재 최신 게시글: {posts[-1]['number']}")
     print(f"저장된 마지막 게시글: {last_post}")
 
+    # --------------------------------------------------------
     # 최초 실행
+    # --------------------------------------------------------
+
     if last_post is None:
+
         latest_number = posts[-1]["number"]
+
         save_last_post(latest_number)
+
         git_save_state()
 
         print(
-            f"최초 실행이므로 {latest_number}번을 기준점으로 저장했습니다."
+            f"최초 실행이므로 "
+            f"{latest_number}번을 기준점으로 저장했습니다."
         )
+
         return
+
+    # --------------------------------------------------------
+    # 새 게시글 찾기
+    # --------------------------------------------------------
 
     new_posts = [
         post
@@ -184,47 +289,88 @@ def check_once():
     ]
 
     if not new_posts:
+
         print("새 글이 없습니다.")
+
         return
 
+    # --------------------------------------------------------
+    # 새 게시글 처리
+    # --------------------------------------------------------
+
     for post in new_posts:
+
         print(
-            f"새 글 발견: {post['number']} / "
+            f"새 글 발견: "
+            f"{post['number']} / "
             f"{post['title']}"
         )
 
         try:
+
+            # Discord 전송
             send_discord(post)
+
             print("Discord 전송 성공")
 
-            # 성공적으로 전송한 글만 상태 저장
+            # Discord 전송 성공 후에만 상태 저장
             save_last_post(post["number"])
+
             git_save_state()
 
         except Exception as e:
-            print(f"Discord 전송 실패: {e}")
+
+            print(
+                f"게시글 {post['number']} "
+                f"처리 실패: {e}"
+            )
+
+            # 전송 실패한 경우 다음 글로 넘어가지 않음
             break
 
 
+# ============================================================
+# 메인 감시 루프
+# ============================================================
+
 def main():
-    # 약 4분 30초 동안 1분 간격으로 감시
+
+    # 한 번 실행될 때 약 4분 30초 동안 감시
+    # GitHub Actions가 5분마다 새 실행을 시작하도록 구성
     end_time = time.time() + (4 * 60 + 30)
 
     while time.time() < end_time:
+
         try:
+
             check_once()
+
         except Exception as e:
+
             print(f"오류 발생: {e}")
 
+        # 다음 확인까지 남은 시간
         remaining = end_time - time.time()
 
         if remaining <= 0:
             break
 
+        # 최대 60초 대기
         sleep_time = min(60, remaining)
-        print(f"{int(sleep_time)}초 후 다시 확인합니다.")
+
+        print(
+            f"{int(sleep_time)}초 후 "
+            f"다시 확인합니다."
+        )
+
         time.sleep(sleep_time)
 
+    print("이번 감시 작업을 종료합니다.")
+
+
+# ============================================================
+# 프로그램 시작
+# ============================================================
 
 if __name__ == "__main__":
     main()
