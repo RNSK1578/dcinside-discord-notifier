@@ -1,8 +1,6 @@
 import os
-import re
 import time
 import subprocess
-
 import requests
 from bs4 import BeautifulSoup
 
@@ -11,7 +9,10 @@ from bs4 import BeautifulSoup
 # 설정
 # ============================================================
 
-GALLERY_URL = "https://gall.dcinside.com/mgallery/board/lists/?id=minikeyboard"
+GALLERY_URL = (
+    "https://gall.dcinside.com/mgallery/board/lists/"
+    "?id=minikeyboard"
+)
 
 WEBHOOK_URL = os.environ["DISCORD_WEBHOOK"]
 
@@ -27,7 +28,7 @@ HEADERS = {
 
 
 # ============================================================
-# 디시인사이드 게시글 가져오기
+# 디시인사이드 최신 게시글 가져오기
 # ============================================================
 
 def get_latest_posts():
@@ -40,50 +41,84 @@ def get_latest_posts():
 
     response.raise_for_status()
 
-    soup = BeautifulSoup(response.text, "html.parser")
+    soup = BeautifulSoup(
+        response.text,
+        "html.parser"
+    )
 
     posts = []
 
     for row in soup.select("tr.ub-content"):
 
+        # --------------------------------------------
         # 게시글 번호
+        # --------------------------------------------
+
         num_element = row.select_one(".gall_num")
 
         if not num_element:
             continue
 
-        num_text = num_element.get_text(strip=True)
+        num_text = num_element.get_text(
+            strip=True
+        )
 
-        # 공지/광고 등 숫자가 아닌 항목 제외
+        # 공지 / 광고 등 숫자가 아닌 항목 제외
         if not num_text.isdigit():
             continue
 
         post_number = int(num_text)
 
+        # --------------------------------------------
         # 제목
-        title_element = row.select_one(".gall_tit a")
+        # --------------------------------------------
+
+        title_element = row.select_one(
+            ".gall_tit a"
+        )
 
         if not title_element:
             continue
 
-        title = title_element.get_text(" ", strip=True)
+        title = title_element.get_text(
+            " ",
+            strip=True
+        )
 
+        # --------------------------------------------
         # 작성자
-        author_element = row.select_one(".gall_writer")
+        # --------------------------------------------
+
+        author_element = row.select_one(
+            ".gall_writer"
+        )
 
         if author_element:
-            author = author_element.get_text(" ", strip=True)
+            author = author_element.get_text(
+                " ",
+                strip=True
+            )
         else:
             author = "알 수 없음"
 
-        # 공백 정리
-        author = re.sub(r"\s+", " ", author).strip()
+        # 여러 공백 정리
+        author = " ".join(
+            author.split()
+        )
 
+        # --------------------------------------------
         # 작성 시간
-        date_element = row.select_one(".gall_date")
+        # --------------------------------------------
+
+        date_element = row.select_one(
+            ".gall_date"
+        )
 
         if date_element:
-            post_time = date_element.get_text(" ", strip=True)
+            post_time = date_element.get_text(
+                " ",
+                strip=True
+            )
         else:
             post_time = "알 수 없음"
 
@@ -91,17 +126,19 @@ def get_latest_posts():
             "number": post_number,
             "title": title,
             "author": author,
-            "time": post_time,
+            "time": post_time
         })
 
-    # 게시글 번호 순으로 정렬
-    posts.sort(key=lambda x: x["number"])
+    # 게시글 번호 기준 오름차순 정렬
+    posts.sort(
+        key=lambda x: x["number"]
+    )
 
     return posts
 
 
 # ============================================================
-# 마지막으로 확인한 게시글 번호 읽기
+# 마지막으로 처리한 게시글 번호 읽기
 # ============================================================
 
 def load_last_post():
@@ -117,9 +154,18 @@ def load_last_post():
             encoding="utf-8"
         ) as f:
 
-            return int(f.read().strip())
+            value = f.read().strip()
 
-    except Exception:
+        if not value:
+            return None
+
+        return int(value)
+
+    except Exception as e:
+
+        print(
+            f"마지막 게시글 번호 읽기 실패: {e}"
+        )
 
         return None
 
@@ -136,7 +182,9 @@ def save_last_post(post_number):
         encoding="utf-8"
     ) as f:
 
-        f.write(str(post_number))
+        f.write(
+            str(post_number)
+        )
 
 
 # ============================================================
@@ -171,9 +219,9 @@ def git_save_state():
 
     try:
 
-        # ----------------------------------------------------
+        # --------------------------------------------
         # Git 사용자 설정
-        # ----------------------------------------------------
+        # --------------------------------------------
 
         subprocess.run(
             [
@@ -195,79 +243,9 @@ def git_save_state():
             check=True
         )
 
-        # ----------------------------------------------------
-        # 원격 저장소의 최신 상태 확인
-        # ----------------------------------------------------
-
-        subprocess.run(
-            [
-                "git",
-                "fetch",
-                "origin",
-                "main"
-            ],
-            check=True
-        )
-
-        # ----------------------------------------------------
-        # 현재 변경된 last_post.txt 임시 보관
-        #
-        # 최초 실행에서는 last_post.txt가 새 파일이므로
-        # -u 옵션으로 untracked 파일도 stash에 포함
-        # ----------------------------------------------------
-
-        stash_result = subprocess.run(
-            [
-                "git",
-                "stash",
-                "push",
-                "-u",
-                "-m",
-                "temporary last post state",
-                "--",
-                STATE_FILE
-            ],
-            capture_output=True,
-            text=True
-        )
-
-        stash_created = (
-            "No local changes" not in stash_result.stdout
-        )
-
-        # ----------------------------------------------------
-        # 원격 main의 최신 변경사항 반영
-        # ----------------------------------------------------
-
-        subprocess.run(
-    [
-        "git",
-        "pull",
-        "--rebase",
-        "origin",
-        "main"
-    ],
-    check=True
-)
-
-        # ----------------------------------------------------
-        # 임시 보관했던 last_post.txt 복원
-        # ----------------------------------------------------
-
-        if stash_created:
-
-            subprocess.run(
-                [
-                    "git",
-                    "stash",
-                    "pop"
-                ],
-                check=True
-            )
-
-        # ----------------------------------------------------
+        # --------------------------------------------
         # 상태 파일 추가
-        # ----------------------------------------------------
+        # --------------------------------------------
 
         subprocess.run(
             [
@@ -278,11 +256,11 @@ def git_save_state():
             check=True
         )
 
-        # ----------------------------------------------------
-        # 변경사항 확인
-        # ----------------------------------------------------
+        # --------------------------------------------
+        # 변경사항이 있는지 확인
+        # --------------------------------------------
 
-        result = subprocess.run(
+        diff_result = subprocess.run(
             [
                 "git",
                 "diff",
@@ -291,8 +269,7 @@ def git_save_state():
             ]
         )
 
-        # 변경사항이 없으면 종료
-        if result.returncode == 0:
+        if diff_result.returncode == 0:
 
             print(
                 "저장할 상태 변경사항이 없습니다."
@@ -300,9 +277,9 @@ def git_save_state():
 
             return
 
-        # ----------------------------------------------------
+        # --------------------------------------------
         # 커밋
-        # ----------------------------------------------------
+        # --------------------------------------------
 
         subprocess.run(
             [
@@ -314,57 +291,70 @@ def git_save_state():
             check=True
         )
 
-        # ----------------------------------------------------
-        # GitHub에 push
-        # 최대 3번 시도
-        # ----------------------------------------------------
+        # --------------------------------------------
+        # 원격 저장소 최신 상태 확인 후 push
+        # --------------------------------------------
 
         for attempt in range(1, 4):
 
             try:
 
+                print(
+                    f"GitHub 저장 시도 "
+                    f"({attempt}/3)"
+                )
+
+                # 원격 main의 최신 상태 가져오기
+                subprocess.run(
+                    [
+                        "git",
+                        "fetch",
+                        "origin",
+                        "main"
+                    ],
+                    check=True
+                )
+
+                # 현재 커밋을 원격 main 위에 재배치
+                subprocess.run(
+                    [
+                        "git",
+                        "rebase",
+                        "origin/main"
+                    ],
+                    check=True
+                )
+
+                # push
                 subprocess.run(
                     [
                         "git",
                         "push",
                         "origin",
-                        "main"
+                        "HEAD:main"
                     ],
                     check=True
                 )
 
                 print(
-                    "마지막 게시글 상태 저장 성공 "
-                    f"(시도 {attempt}/3)"
+                    "마지막 게시글 상태 저장 성공"
                 )
 
                 return
 
-            except subprocess.CalledProcessError:
+            except subprocess.CalledProcessError as e:
 
+                print(
+                    f"GitHub 저장 실패 "
+                    f"({attempt}/3): {e}"
+                )
+
+                # 마지막 시도라면 오류 발생
                 if attempt == 3:
                     raise
 
-                print(
-                    "Push 실패. "
-                    "원격 저장소를 다시 확인합니다. "
-                    f"({attempt}/3)"
-                )
-
-                subprocess.run(
-                    [
-                        "git",
-                        "pull",
-                        "--rebase",
-                        "origin",
-                        "main"
-                    ],
-                    check=True
-                )
-
-        raise RuntimeError(
-            "GitHub에 마지막 게시글 상태를 저장하지 못했습니다."
-        )
+                # 다음 시도 전 잠시 대기
+                time.sleep(3)
 
     except Exception as e:
 
@@ -372,7 +362,6 @@ def git_save_state():
             f"State save error: {e}"
         )
 
-        # 상태 저장 실패를 Actions에서도 실패로 표시
         raise
 
 
@@ -392,11 +381,13 @@ def check_once():
 
         return
 
+    latest_post_number = posts[-1]["number"]
+
     last_post = load_last_post()
 
     print(
         f"현재 최신 게시글: "
-        f"{posts[-1]['number']}"
+        f"{latest_post_number}"
     )
 
     print(
@@ -404,31 +395,29 @@ def check_once():
         f"{last_post}"
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # 최초 실행
-    # --------------------------------------------------------
+    # ========================================================
 
     if last_post is None:
 
-        latest_number = posts[-1]["number"]
-
         save_last_post(
-            latest_number
+            latest_post_number
         )
 
         git_save_state()
 
         print(
             f"최초 실행이므로 "
-            f"{latest_number}번을 "
-            f"기준점으로 저장했습니다."
+            f"{latest_post_number}번을 "
+            "기준점으로 저장했습니다."
         )
 
         return
 
-    # --------------------------------------------------------
-    # 새 게시글 찾기
-    # --------------------------------------------------------
+    # ========================================================
+    # 새로운 게시글 찾기
+    # ========================================================
 
     new_posts = [
         post
@@ -444,9 +433,15 @@ def check_once():
 
         return
 
-    # --------------------------------------------------------
-    # 새 게시글 처리
-    # --------------------------------------------------------
+    print(
+        f"새 글 {len(new_posts)}개 발견"
+    )
+
+    # ========================================================
+    # 새 게시글 Discord 전송
+    # ========================================================
+
+    last_successful_number = last_post
 
     for post in new_posts:
 
@@ -458,33 +453,44 @@ def check_once():
 
         try:
 
-            # Discord 전송
             send_discord(post)
 
             print(
-                "Discord 전송 성공"
+                f"Discord 전송 성공: "
+                f"{post['number']}"
             )
 
-            # Discord 전송에 성공한 경우에만
-            # 마지막 게시글 번호 업데이트
-            save_last_post(
+            last_successful_number = (
                 post["number"]
             )
-
-            # GitHub에 상태 저장
-            git_save_state()
 
         except Exception as e:
 
             print(
-                f"게시글 "
-                f"{post['number']} "
-                f"처리 실패: {e}"
+                f"Discord 전송 실패: "
+                f"{post['number']} / {e}"
             )
 
-            # 실패한 글 이후의 게시글은
+            # 실패한 게시글 이후의 글은
             # 다음 실행에서 다시 처리
             break
+
+    # ========================================================
+    # Discord 전송에 성공한 마지막 게시글 저장
+    # ========================================================
+
+    if last_successful_number > last_post:
+
+        save_last_post(
+            last_successful_number
+        )
+
+        git_save_state()
+
+        print(
+            f"마지막 처리 게시글: "
+            f"{last_successful_number}"
+        )
 
 
 # ============================================================
@@ -493,11 +499,11 @@ def check_once():
 
 def main():
 
-    # 한 번 실행될 때 약 4분 30초 동안 감시
+    # GitHub Actions 한 번의 실행에서
+    # 약 4분 30초 동안 감시
     #
-    # GitHub Actions가 5분마다 새 실행을 시작하므로
-    # 사실상 약 1분 간격으로 감시하는 구조
-    # ========================================================
+    # workflow가 5분마다 실행되므로
+    # 사실상 약 1분 간격으로 계속 확인
 
     end_time = (
         time.time()
@@ -516,17 +522,18 @@ def main():
                 f"오류 발생: {e}"
             )
 
-        # 다음 확인까지 남은 시간
+        # --------------------------------------------
+        # 다음 확인까지 최대 60초 대기
+        # --------------------------------------------
+
         remaining = (
             end_time
             - time.time()
         )
 
         if remaining <= 0:
-
             break
 
-        # 최대 60초 대기
         sleep_time = min(
             60,
             remaining
