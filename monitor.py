@@ -240,15 +240,15 @@ def git_save_state():
         # ----------------------------------------------------
 
         subprocess.run(
-            [
-                "git",
-                pull,
-                "--rebase",
-                "origin",
-                "main"
-            ],
-            check=True
-        )
+    [
+        "git",
+        "pull",
+        "--rebase",
+        "origin",
+        "main"
+    ],
+    check=True
+)
 
         # ----------------------------------------------------
         # 임시 보관했던 last_post.txt 복원
